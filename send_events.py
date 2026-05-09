@@ -1,54 +1,80 @@
 import os
 import requests
-from datetime import datetime, timedelta, timezone
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 
 LINE_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 GROUP_ID = os.environ["LINE_GROUP_ID"]
-EVENTBRITE_TOKEN = os.environ["EVENTBRITE_TOKEN"]
 
-EVENTBRITE_URL = "https://www.eventbriteapi.com/v3/events/search/"
+# グルメ・デート系キーワードでPeatix検索（APIキー不要）
+PEATIX_RSS_URLS = [
+    "https://peatix.com/search/events/rss?tag=グルメ&country=JP&state=13",
+    "https://peatix.com/search/events/rss?tag=食&country=JP&state=13",
+    "https://peatix.com/search/events/rss?tag=マルシェ&country=JP&state=13",
+    "https://peatix.com/search/events/rss?tag=フード&country=JP&state=13",
+]
 
-# グルメ・おでかけ・デート向けカテゴリ
-# 110=Food & Drink, 105=Arts & Entertainment, 103=Music, 104=Film & Media
-TARGET_CATEGORIES = "110,105,103,104"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; TokyoEventBot/1.0)"
+}
 
 
 def get_tokyo_events():
-    today = datetime.now(timezone.utc)
+    today = datetime.now()
     next_week = today + timedelta(days=7)
-
-    params = {
-        "token": EVENTBRITE_TOKEN,
-        "location.address": "Tokyo, Japan",
-        "location.within": "30km",
-        "categories": TARGET_CATEGORIES,
-        "start_date.range_start": today.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "start_date.range_end": next_week.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "sort_by": "date",
-        "expand": "venue",
-        "page_size": 10,
-    }
-
-    resp = requests.get(EVENTBRITE_URL, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-
+    seen = set()
     events = []
-    for e in data.get("events", []):
-        start = e.get("start", {}).get("local", "")
-        if not start:
-            continue
-        started_at = datetime.strptime(start[:10], "%Y-%m-%d")
-        venue = e.get("venue") or {}
-        place = venue.get("name") or venue.get("address", {}).get("city") or "東京"
-        events.append({
-            "title": e.get("name", {}).get("text", "タイトルなし"),
-            "date": started_at.strftime("%m/%d(%a)"),
-            "url": e.get("url", ""),
-            "place": place,
-        })
 
-    return events[:5]
+    for url in PEATIX_RSS_URLS:
+        if len(events) >= 5:
+            break
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            resp.raise_for_status()
+            root = ET.fromstring(resp.content)
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+            for item in root.findall(".//item"):
+                title_el = item.find("title")
+                link_el = item.find("link")
+                pubdate_el = item.find("pubDate")
+                if title_el is None or link_el is None:
+                    continue
+
+                title = title_el.text or ""
+                link = link_el.text or ""
+
+                if link in seen:
+                    continue
+                seen.add(link)
+
+                # 日付パース
+                date_str = "今週"
+                if pubdate_el is not None and pubdate_el.text:
+                    try:
+                        dt = parsedate_to_datetime(pubdate_el.text)
+                        started_at = dt.replace(tzinfo=None)
+                        if not (today - timedelta(days=1) <= started_at <= next_week):
+                            continue
+                        date_str = started_at.strftime("%m/%d(%a)")
+                    except Exception:
+                        pass
+
+                events.append({
+                    "title": title,
+                    "date": date_str,
+                    "url": link,
+                    "place": "東京",
+                })
+
+                if len(events) >= 5:
+                    break
+        except Exception as e:
+            print(f"RSS取得エラー: {e}")
+            continue
+
+    return events
 
 
 def build_message(events):
