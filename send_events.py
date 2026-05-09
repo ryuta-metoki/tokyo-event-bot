@@ -1,44 +1,52 @@
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 LINE_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 GROUP_ID = os.environ["LINE_GROUP_ID"]
+EVENTBRITE_TOKEN = os.environ["EVENTBRITE_TOKEN"]
 
-DOORKEEPER_URL = "https://api.doorkeeper.jp/events"
+EVENTBRITE_URL = "https://www.eventbriteapi.com/v3/events/search/"
+
+# グルメ・おでかけ・デート向けカテゴリ
+# 110=Food & Drink, 105=Arts & Entertainment, 103=Music, 104=Film & Media
+TARGET_CATEGORIES = "110,105,103,104"
 
 
 def get_tokyo_events():
-    today = datetime.now()
+    today = datetime.now(timezone.utc)
     next_week = today + timedelta(days=7)
 
     params = {
-        "locale": "ja",
-        "sort": "starts_at",
-        "per_page": 20,
-        "page": 1,
-        "q": "東京",
+        "token": EVENTBRITE_TOKEN,
+        "location.address": "Tokyo, Japan",
+        "location.within": "30km",
+        "categories": TARGET_CATEGORIES,
+        "start_date.range_start": today.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "start_date.range_end": next_week.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sort_by": "date",
+        "expand": "venue",
+        "page_size": 10,
     }
-    headers = {"Accept": "application/json"}
 
-    resp = requests.get(DOORKEEPER_URL, params=params, headers=headers, timeout=10)
+    resp = requests.get(EVENTBRITE_URL, params=params, timeout=10)
     resp.raise_for_status()
     data = resp.json()
 
     events = []
-    for item in data:
-        e = item.get("event", {})
-        starts_at = e.get("starts_at", "")
-        if not starts_at:
+    for e in data.get("events", []):
+        start = e.get("start", {}).get("local", "")
+        if not start:
             continue
-        started_at = datetime.strptime(starts_at[:10], "%Y-%m-%d")
-        if today <= started_at <= next_week:
-            events.append({
-                "title": e.get("title", "タイトルなし"),
-                "date": started_at.strftime("%m/%d(%a)"),
-                "url": e.get("public_url", ""),
-                "place": e.get("venue_name") or "オンライン",
-            })
+        started_at = datetime.strptime(start[:10], "%Y-%m-%d")
+        venue = e.get("venue") or {}
+        place = venue.get("name") or venue.get("address", {}).get("city") or "東京"
+        events.append({
+            "title": e.get("name", {}).get("text", "タイトルなし"),
+            "date": started_at.strftime("%m/%d(%a)"),
+            "url": e.get("url", ""),
+            "place": place,
+        })
 
     return events[:5]
 
