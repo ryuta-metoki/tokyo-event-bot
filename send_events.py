@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 LINE_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 GROUP_ID = os.environ["LINE_GROUP_ID"]
 
-CONNPASS_URL = "https://connpass.com/api/v1/event/"
+DOORKEEPER_URL = "https://api.doorkeeper.jp/events"
 
 
 def get_tokyo_events():
@@ -13,25 +13,31 @@ def get_tokyo_events():
     next_week = today + timedelta(days=7)
 
     params = {
-        "prefecture": "tokyo",
-        "count": 10,
-        "order": 2,
-        "ym": today.strftime("%Y%m"),
+        "locale": "ja",
+        "sort": "starts_at",
+        "per_page": 20,
+        "page": 1,
+        "q": "東京",
     }
+    headers = {"Accept": "application/json"}
 
-    resp = requests.get(CONNPASS_URL, params=params, timeout=10)
+    resp = requests.get(DOORKEEPER_URL, params=params, headers=headers, timeout=10)
     resp.raise_for_status()
     data = resp.json()
 
     events = []
-    for e in data.get("events", []):
-        started_at = datetime.strptime(e["started_at"][:10], "%Y-%m-%d")
+    for item in data:
+        e = item.get("event", {})
+        starts_at = e.get("starts_at", "")
+        if not starts_at:
+            continue
+        started_at = datetime.strptime(starts_at[:10], "%Y-%m-%d")
         if today <= started_at <= next_week:
             events.append({
-                "title": e["title"],
+                "title": e.get("title", "タイトルなし"),
                 "date": started_at.strftime("%m/%d(%a)"),
-                "url": e["event_url"],
-                "place": e.get("place") or "オンライン",
+                "url": e.get("public_url", ""),
+                "place": e.get("venue_name") or "オンライン",
             })
 
     return events[:5]
