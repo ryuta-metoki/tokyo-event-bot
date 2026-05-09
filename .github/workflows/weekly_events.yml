@@ -1,0 +1,26 @@
+name: 毎週金曜イベント送信
+
+on:
+  schedule:
+    - cron: "0 23 * * 4"  # 毎週金曜 08:00 JST (UTC+9 → UTC 23:00 木曜)
+  workflow_dispatch:       # 手動実行も可能
+
+jobs:
+  send-events:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Send Tokyo events to LINE
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_GROUP_ID: ${{ secrets.LINE_GROUP_ID }}
+        run: python send_events.py
