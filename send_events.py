@@ -17,7 +17,7 @@ def get_tokyo_events():
     root = ET.fromstring(resp.content)
 
     events = []
-    for item in root.findall(".//item")[:10]:
+    for item in root.findall(".//item")[:20]:
         title = (item.findtext("title") or "").strip()
         link = (item.findtext("link") or "").strip()
         pub = item.findtext("pubDate") or ""
@@ -32,47 +32,67 @@ def get_tokyo_events():
 
         events.append({"title": title, "url": link, "date": date_str})
 
-    return events[:5]
+    return events[:15]
 
 
-def build_message(events):
+def build_messages(events):
     today = datetime.now()
-    lines = [f"🗓 今週の東京グルメ＆おでかけ情報 ({today.strftime('%m/%d')}週)"]
-    lines.append("─" * 20)
+    messages = []
 
-    if not events:
-        lines.append("今週は情報が取得できへんかったわ。")
-    else:
-        for i, e in enumerate(events, 1):
-            lines.append(f"\n【{i}】{e['title']}")
+    # 1通目：ヘッダー
+    header = (
+        f"🗓 今週の東京グルメ＆おでかけ情報\n"
+        f"({today.strftime('%m/%d')}週）全{len(events)}件\n"
+        f"{'─' * 20}"
+    )
+    messages.append(header)
+
+    # 3件ずつに分割して送信
+    chunk_size = 3
+    for chunk_start in range(0, len(events), chunk_size):
+        chunk = events[chunk_start:chunk_start + chunk_size]
+        lines = []
+        for i, e in enumerate(chunk, chunk_start + 1):
+            lines.append(f"【{i}】{e['title']}")
             lines.append(f"🔗 {e['url']}")
+            lines.append("")
+        messages.append("\n".join(lines).strip())
 
-    lines.append("\n─" * 20)
-    lines.append("詳細はリンクから確認してな！")
-    return "\n".join(lines)
+    # 最後にフッター
+    messages.append("詳細はリンクから確認してな！")
+    return messages
 
 
-def send_line_message(text):
+def send_line_messages(texts):
     headers = {
         "Authorization": f"Bearer {LINE_TOKEN}",
         "Content-Type": "application/json",
     }
-    payload = {
-        "to": GROUP_ID,
-        "messages": [{"type": "text", "text": text}],
-    }
-    resp = requests.post(
-        "https://api.line.me/v2/bot/message/push",
-        headers=headers,
-        json=payload,
-        timeout=10,
-    )
-    resp.raise_for_status()
+    # LINEは1回のAPIで最大5メッセージまで送れる
+    chunk_size = 5
+    for i in range(0, len(texts), chunk_size):
+        chunk = texts[i:i + chunk_size]
+        payload = {
+            "to": GROUP_ID,
+            "messages": [{"type": "text", "text": t} for t in chunk],
+        }
+        resp = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers=headers,
+            json=payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
     print("送信完了やで！")
 
 
 if __name__ == "__main__":
     events = get_tokyo_events()
-    message = build_message(events)
-    print(message)
-    send_line_message(message)
+    if not events:
+        print("イベントが取得できへんかったわ")
+    else:
+        messages = build_messages(events)
+        for m in messages:
+            print(m)
+            print("---")
+        send_line_messages(messages)
